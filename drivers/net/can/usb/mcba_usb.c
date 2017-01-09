@@ -56,13 +56,6 @@
 #define MBCA_CMD_NOTHING_TO_SEND 0xFF
 #define MBCA_CMD_TRANSMIT_MESSAGE_RSP 0xE2
 
-/* debug module parameter handling */
-#define MCBA_PARAM_DEBUG_DISABLE 0
-#define MCBA_PARAM_DEBUG_USB 1
-#define MCBA_PARAM_DEBUG_CAN 2
-#define MCBA_IS_USB_DEBUG() (debug & MCBA_PARAM_DEBUG_USB)
-#define MCBA_IS_CAN_DEBUG() (debug & MCBA_PARAM_DEBUG_CAN)
-
 #define MCBA_VER_REQ_USB 1
 #define MCBA_VER_REQ_CAN 2
 
@@ -476,13 +469,6 @@ static const struct bitrate_settings br_settings[] = {
 	}
 };
 
-static int debug;
-module_param(debug, int, 0664);
-MODULE_PARM_DESC(debug,
-		 "Binary flag to control device debug (keep alive) prints in dmesg. 0='Debug prints disabled' "
-		 __stringify(MCBA_PARAM_DEBUG_USB) "='PIC_USB debugs enabled' "
-		 __stringify(MCBA_PARAM_DEBUG_CAN) "='PIC_CAN debugs enabled'");
-
 static const struct usb_device_id mcba_usb_table[] = {
 	{ USB_DEVICE(MCBA_VENDOR_ID, MCBA_PRODUCT_ID) },
 	{ } /* Terminating entry */
@@ -566,13 +552,6 @@ static void mcba_usb_process_can(struct mcba_priv *priv,
 static void mcba_usb_process_ka_usb(struct mcba_priv *priv,
 				    struct mcba_usb_msg_ka_usb *msg)
 {
-	if (unlikely(MCBA_IS_USB_DEBUG())) {
-		netdev_info(priv->netdev,
-			    "USB_KA: termination %hhu, ver_maj %hhu, soft_min %hhu\n",
-			    msg->termination_state, msg->soft_ver_major,
-			    msg->soft_ver_minor);
-	}
-
 	if (unlikely(priv->usb_ka_first_pass)) {
 		netdev_info(priv->netdev,
 			    "PIC USB version %hhu.%hhu\n",
@@ -587,19 +566,6 @@ static void mcba_usb_process_ka_usb(struct mcba_priv *priv,
 static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 				    struct mcba_usb_msg_ka_can *msg)
 {
-	if (unlikely(MCBA_IS_CAN_DEBUG())) {
-		netdev_info(priv->netdev,
-			    "CAN_KA: tx_err_cnt %hhu, rx_err_cnt %hhu, rx_buff_ovfl %hhu, tx_bus_off %hhu, can_bitrate %hu, rx_lost %hu, can_stat %hhu, soft_ver %hhu.%hhu, debug_mode %hhu, test_complete %hhu, test_result %hhu\n",
-			    msg->tx_err_cnt, msg->rx_err_cnt, msg->rx_buff_ovfl,
-			    msg->tx_bus_off,
-			    ((msg->can_bitrate_hi << 8) + msg->can_bitrate_lo),
-			    ((msg->rx_lost_hi >> 8) + msg->rx_lost_lo),
-			    msg->can_stat, msg->soft_ver_major,
-			    msg->soft_ver_minor,
-			    msg->debug_mode, msg->test_complete,
-			    msg->test_result);
-	}
-
 	if (unlikely(priv->can_ka_first_pass)) {
 		netdev_info(priv->netdev,
 			    "PIC CAN version %hhu.%hhu\n",
