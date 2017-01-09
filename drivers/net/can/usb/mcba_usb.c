@@ -88,9 +88,6 @@
 #define MCBA_DLC_MASK 0xf
 #define MCBA_DLC_RTR_MASK 0x40
 
-#define MCBA_CAN_RTR_MASK 0x40000000
-#define MCBA_CAN_EXID_MASK 0x80000000
-
 #define MCBA_SET_S_SIDL(can_id)\
 (((can_id) & MCBA_CAN_S_SID0_SID2_MASK) << MCBA_SIDL_SID0_SID2_SHIFT)
 
@@ -124,12 +121,12 @@ MCBA_SIDL_EXID_MASK)
 << MCBA_CAN_EID16_EID17_SHIFT) |\
 ((usb_msg)->eidh << MCBA_CAN_EID8_EID15_SHIFT) |\
 (usb_msg)->eidl |\
-MCBA_CAN_EXID_MASK)
+CAN_EFF_FLAG)
 
 #define MCBA_RX_IS_EXID(usb_msg) ((usb_msg)->sidl & MCBA_SIDL_EXID_MASK)
 #define MCBA_RX_IS_RTR(usb_msg) ((usb_msg)->dlc & MCBA_DLC_RTR_MASK)
-#define MCBA_TX_IS_EXID(can_frame) ((can_frame)->can_id & MCBA_CAN_EXID_MASK)
-#define MCBA_TX_IS_RTR(can_frame) ((can_frame)->can_id & MCBA_CAN_RTR_MASK)
+#define MCBA_TX_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
+#define MCBA_TX_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
 
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
@@ -545,7 +542,7 @@ static void mcba_usb_process_can(struct mcba_priv *priv,
 		cf->can_id = MCBA_CAN_GET_SID(msg);
 
 	if (MCBA_RX_IS_RTR(msg))
-		cf->can_id |= MCBA_CAN_RTR_MASK;
+		cf->can_id |= CAN_RTR_FLAG;
 
 	cf->can_dlc = msg->dlc & MCBA_DLC_MASK;
 
