@@ -26,6 +26,7 @@
 #include <linux/can.h>
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
+#include <linux/unaligned/be_byteshift.h>
 
 /* vendor and product id */
 #define MCBA_MODULE_NAME "mcba_usb"
@@ -149,10 +150,8 @@ struct __packed mcba_usb_msg_ka_can {
 	u8 rx_err_cnt;
 	u8 rx_buff_ovfl;
 	u8 tx_bus_off;
-	u8 can_bitrate_hi;
-	u8 can_bitrate_lo;
-	u8 rx_lost_lo;
-	u8 rx_lost_hi;
+	u16 can_bitrate; /* BE */
+	u16 rx_lost; /* LE */
 	u8 can_stat;
 	u8 soft_ver_major;
 	u8 soft_ver_minor;
@@ -164,8 +163,7 @@ struct __packed mcba_usb_msg_ka_can {
 
 struct __packed mcba_usb_msg_change_bitrate {
 	u8 cmd_id;
-	u8 bitrate_hi;
-	u8 bitrate_lo;
+	u16 bitrate; /* BE */
 	u8 unused[16];
 };
 
@@ -965,8 +963,7 @@ static void mcba_usb_xmit_change_bitrate(struct mcba_priv *priv, u16 bitrate)
 	struct mcba_usb_msg_change_bitrate usb_msg;
 
 	usb_msg.cmd_id =  MBCA_CMD_CHANGE_BIT_RATE;
-	usb_msg.bitrate_hi = (0xff00 & bitrate) >> 8;
-	usb_msg.bitrate_lo = (0xff & bitrate);
+	put_unaligned_be16(bitrate, &usb_msg.bitrate);
 
 	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 }
