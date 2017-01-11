@@ -88,45 +88,10 @@
 #define MCBA_DLC_MASK 0xf
 #define MCBA_DLC_RTR_MASK 0x40
 
-#define MCBA_SET_S_SIDL(can_id)\
-(((can_id) & MCBA_CAN_S_SID0_SID2_MASK) << MCBA_SIDL_SID0_SID2_SHIFT)
-
-#define MCBA_SET_E_SIDL(can_id)\
-(((((can_id) & MCBA_CAN_E_SID0_SID2_MASK) >> MCBA_CAN_E_SID0_SID2_SHIFT)\
-<< MCBA_SIDL_SID0_SID2_SHIFT) |\
-(((can_id) & MCBA_CAN_EID16_EID17_MASK) >> MCBA_CAN_EID16_EID17_SHIFT) |\
-MCBA_SIDL_EXID_MASK)
-
-#define MCBA_SET_S_SIDH(can_id)\
-(((can_id) & MCBA_CAN_S_SID3_SID10_MASK) >> MCBA_CAN_S_SID3_SID10_SHIFT)
-
-#define MCBA_SET_E_SIDH(can_id)\
-(((can_id) & MCBA_CAN_E_SID3_SID10_MASK) >> MCBA_CAN_E_SID3_SID10_SHIFT)
-
-#define MCBA_SET_EIDL(can_id)\
-((can_id) & MCBA_CAN_EID0_EID7_MASK)
-
-#define MCBA_SET_EIDH(can_id)\
-(((can_id) & MCBA_CAN_EID8_EID15_MASK) >> MCBA_CAN_EID8_EID15_SHIFT)
-
-#define MCBA_CAN_GET_SID(usb_msg)\
-((((usb_msg)->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) |\
-((usb_msg)->sidh << MCBA_CAN_S_SID3_SID10_SHIFT))
-
-#define MCBA_CAN_GET_EID(usb_msg)\
-((((usb_msg)->sidh << MCBA_CAN_E_SID3_SID10_SHIFT) |\
-(((usb_msg)->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) \
-<< MCBA_CAN_E_SID0_SID2_SHIFT) |\
-(((usb_msg)->sidl & MCBA_SIDL_EID16_EID17_MASK) \
-<< MCBA_CAN_EID16_EID17_SHIFT) |\
-((usb_msg)->eidh << MCBA_CAN_EID8_EID15_SHIFT) |\
-(usb_msg)->eidl |\
-CAN_EFF_FLAG)
-
-#define MCBA_RX_IS_EXID(usb_msg) ((usb_msg)->sidl & MCBA_SIDL_EXID_MASK)
-#define MCBA_RX_IS_RTR(usb_msg) ((usb_msg)->dlc & MCBA_DLC_RTR_MASK)
-#define MCBA_TX_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
-#define MCBA_TX_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
+#define MCBA_USB_IS_EXID(usb_msg) ((usb_msg)->sidl & MCBA_SIDL_EXID_MASK)
+#define MCBA_USB_IS_RTR(usb_msg) ((usb_msg)->dlc & MCBA_DLC_RTR_MASK)
+#define MCBA_CAN_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
+#define MCBA_CAN_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
 
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
@@ -525,6 +490,47 @@ static struct device_attribute termination_attr = {
 	.store	= termination_store
 };
 
+static inline void convert_usb2can_msg(const struct mcba_usb_msg_can *in,
+			               struct can_frame *out) {
+	u32 tmp;
+
+	if (MCBA_USB_IS_EXID(in)) {
+		out->can_id = in->eidl;
+
+		tmp = in->eidh;
+		tmp <<= MCBA_CAN_EID8_EID15_SHIFT;
+		out->can_id |= tmp;
+
+		tmp = in->sidl & MCBA_SIDL_EID16_EID17_MASK;
+		tmp <<= MCBA_CAN_EID16_EID17_SHIFT;
+		out->can_id |= tmp;
+
+		tmp = in->sidl & MCBA_SIDL_SID0_SID2_MASK;
+		tmp <<= MCBA_CAN_E_SID0_SID2_SHIFT - MCBA_SIDL_SID0_SID2_SHIFT;
+		out->can_id |= tmp;
+
+		tmp = in->sidh;
+		tmp <<= MCBA_CAN_E_SID3_SID10_SHIFT;
+		out->can_id |= tmp;
+
+		out->can_id |= CAN_EFF_FLAG;
+	} else {
+		out->can_id = in->sidl & MCBA_SIDL_SID0_SID2_MASK;
+		out->can_id >>= MCBA_SIDL_SID0_SID2_SHIFT;
+
+		tmp = in->sidh;
+		tmp <<= MCBA_CAN_S_SID3_SID10_SHIFT;
+		out->can_id |= tmp;
+	}
+
+	if (MCBA_USB_IS_RTR(in))
+		out->can_id |= CAN_RTR_FLAG;
+
+	out->can_dlc = get_can_dlc(in->dlc & MCBA_DLC_MASK);
+
+	memcpy(out->data, in->data, out->can_dlc);
+}
+
 static void mcba_usb_process_can(struct mcba_priv *priv,
 				 struct mcba_usb_msg_can *msg)
 {
@@ -536,20 +542,11 @@ static void mcba_usb_process_can(struct mcba_priv *priv,
 	if (!skb)
 		return;
 
-	if (MCBA_RX_IS_EXID(msg))
-		cf->can_id = MCBA_CAN_GET_EID(msg);
-	else
-		cf->can_id = MCBA_CAN_GET_SID(msg);
-
-	if (MCBA_RX_IS_RTR(msg))
-		cf->can_id |= CAN_RTR_FLAG;
-
-	cf->can_dlc = msg->dlc & MCBA_DLC_MASK;
-
-	memcpy(cf->data, msg->data, cf->can_dlc);
+	convert_usb2can_msg(msg, cf);
 
 	stats->rx_packets++;
 	stats->rx_bytes += cf->can_dlc;
+
 	netif_rx(skb);
 }
 
@@ -812,6 +809,51 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
 	mcba_usb_free_ctx(ctx);
 }
 
+static inline void convert_can2usb_msg(const struct can_frame *in, 
+				       struct mcba_usb_msg_can *out) {
+	u32 tmp;
+
+	if (MCBA_CAN_IS_EXID(in)) {
+		out->sidl = MCBA_SIDL_EXID_MASK;
+
+		tmp = in->can_id & MCBA_CAN_E_SID0_SID2_MASK;
+		tmp >>= MCBA_CAN_E_SID0_SID2_SHIFT - MCBA_SIDL_SID0_SID2_SHIFT;
+		out->sidl |= tmp;
+
+		tmp = in->can_id & MCBA_CAN_EID16_EID17_MASK;
+		tmp >>= MCBA_CAN_EID16_EID17_SHIFT;
+		out->sidl |= tmp;
+
+		tmp = in->can_id & MCBA_CAN_E_SID3_SID10_MASK;
+		tmp >>= MCBA_CAN_E_SID3_SID10_SHIFT;
+		out->sidh = tmp;
+
+		out->eidl = in->can_id & MCBA_CAN_EID0_EID7_MASK;
+
+		tmp = in->can_id & MCBA_CAN_EID8_EID15_MASK;
+		tmp >>= MCBA_CAN_EID8_EID15_SHIFT;
+		out->eidh = tmp;
+	} else {
+		tmp = in->can_id & MCBA_CAN_S_SID0_SID2_MASK;
+		tmp <<= MCBA_SIDL_SID0_SID2_SHIFT;
+		out->sidl = tmp;
+
+		tmp = in->can_id & MCBA_CAN_S_SID3_SID10_MASK;
+		tmp >>= MCBA_CAN_S_SID3_SID10_SHIFT;
+		out->sidh = tmp;
+
+		out->eidl = 0;
+		out->eidh = 0;
+	}
+
+	out->dlc = get_can_dlc(in->can_dlc);
+
+	memcpy(out->data, in->data, out->dlc);
+
+	if (MCBA_CAN_IS_RTR(in))
+		out->dlc |= MCBA_DLC_RTR_MASK;
+}
+
 /* Send data to device */
 static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
 				       struct net_device *netdev)
@@ -821,24 +863,8 @@ static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
 	struct mcba_usb_msg_can usb_msg;
 
 	usb_msg.cmd_id = MBCA_CMD_TRANSMIT_MESSAGE_EV;
-	memcpy(usb_msg.data, cf->data, sizeof(usb_msg.data));
 
-	if (MCBA_TX_IS_EXID(cf)) {
-		usb_msg.sidl = MCBA_SET_E_SIDL(cf->can_id);
-		usb_msg.sidh = MCBA_SET_E_SIDH(cf->can_id);
-		usb_msg.eidl = MCBA_SET_EIDL(cf->can_id);
-		usb_msg.eidh = MCBA_SET_EIDH(cf->can_id);
-	} else {
-		usb_msg.sidl = MCBA_SET_S_SIDL(cf->can_id);
-		usb_msg.sidh = MCBA_SET_S_SIDH(cf->can_id);
-		usb_msg.eidl = 0;
-		usb_msg.eidh = 0;
-	}
-
-	usb_msg.dlc = cf->can_dlc;
-
-	if (MCBA_TX_IS_RTR(cf))
-		usb_msg.dlc |= MCBA_DLC_RTR_MASK;
+	convert_can2usb_msg(cf, &usb_msg);
 
 	return mcba_usb_xmit(priv, (struct mcba_usb_msg *)&usb_msg, skb);
 }
