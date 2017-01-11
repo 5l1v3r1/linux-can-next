@@ -454,7 +454,7 @@ static inline void mcba_init_ctx(struct mcba_priv *priv)
 static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv)
 {
 	int i = 0;
-	struct mcba_usb_ctx *ctx = 0;
+	struct mcba_usb_ctx *ctx = NULL;
 
 	for (i = 0; i < MCBA_MAX_TX_URBS; i++) {
 		if (priv->tx_context[i].ndx == MCBA_CTX_FREE) {
@@ -515,7 +515,7 @@ static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv,
 				 struct sk_buff *skb)
 {
 	struct net_device_stats *stats = &priv->netdev->stats;
-	struct mcba_usb_ctx *ctx = 0;
+	struct mcba_usb_ctx *ctx = NULL;
 	struct urb *urb;
 	u8 *buf;
 	int err;
@@ -539,17 +539,13 @@ static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv,
 
 	/* create a URB, and a buffer for it, and copy the data to the URB */
 	urb = usb_alloc_urb(0, GFP_ATOMIC);
-	if (!urb) {
-		netdev_err(priv->netdev, "No memory left for URBs\n");
+	if (!urb)
 		goto nomem;
-	}
 
 	buf = usb_alloc_coherent(priv->udev, MCBA_USB_TX_BUFF_SIZE, GFP_ATOMIC,
 				 &urb->transfer_dma);
-	if (!buf) {
-		netdev_err(priv->netdev, "No memory left for USB buffer\n");
+	if (!buf)
 		goto nomembuf;
-	}
 
 	memcpy(buf, usb_msg, MCBA_USB_TX_BUFF_SIZE);
 
@@ -1023,7 +1019,7 @@ static int mcba_net_set_bittiming(struct net_device *netdev)
 	u8 i;
 	struct mcba_priv *priv = netdev_priv(netdev);
 	struct can_bittiming *bt = &priv->can.bittiming;
-	const struct bitrate_settings *settings = 0;
+	const struct bitrate_settings *settings = NULL;
 	const u8 setting_cnt = sizeof(br_settings) /
 			       sizeof(struct bitrate_settings);
 
@@ -1127,14 +1123,12 @@ static void mcba_usb_disconnect(struct usb_interface *intf)
 
 	usb_set_intfdata(intf, NULL);
 
-	if (priv) {
-		netdev_info(priv->netdev, "device disconnected\n");
+	netdev_info(priv->netdev, "device disconnected\n");
 
-		unregister_candev(priv->netdev);
-		free_candev(priv->netdev);
+	unregister_candev(priv->netdev);
+	free_candev(priv->netdev);
 
-		mcba_urb_unlink(priv);
-	}
+	mcba_urb_unlink(priv);
 }
 
 static struct usb_driver mcba_usb_driver = {
