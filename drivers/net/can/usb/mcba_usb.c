@@ -1074,20 +1074,11 @@ static int mcba_usb_probe(struct usb_interface *intf,
 
 	usb_set_intfdata(intf, priv);
 
-	err = mcba_usb_start(priv);
-	if (err) {
-		if (err == -ENODEV)
-			netif_device_detach(priv->netdev);
-
-		netdev_warn(netdev, "couldn't start device: %d\n", err);
-
-		goto cleanup_candev;
-	}
-
 	/* Init CAN device */
 	priv->can.state = CAN_STATE_STOPPED;
 	priv->can.clock.freq = MCBA_CAN_CLOCK;
 	priv->can.bittiming_const = &mcba_bittiming_const;
+
 	priv->can.do_set_mode = mcba_net_set_mode;
 	priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
 	priv->can.do_set_bittiming = mcba_net_set_bittiming;
@@ -1101,7 +1092,21 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	err = register_candev(netdev);
 	if (err) {
 		netdev_err(netdev,
-			   "couldn't register CAN device: %d\n", err);
+			"couldn't register CAN device: %d\n", err);
+
+		netif_device_detach(priv->netdev);
+
+		goto cleanup_candev;
+	}
+
+	/* Start USB device only if we have successfuly registered CAN device */
+	err = mcba_usb_start(priv);
+	if (err) {
+		if (err == -ENODEV)
+			netif_device_detach(priv->netdev);
+
+		netdev_warn(netdev, "couldn't start device: %d\n", err);
+
 		goto cleanup_candev;
 	}
 
