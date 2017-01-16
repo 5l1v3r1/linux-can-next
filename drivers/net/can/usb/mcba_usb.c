@@ -1057,6 +1057,15 @@ static int mcba_net_set_bittiming(struct net_device *netdev)
 	return 0;
 }
 
+const u16 mcba_termination[] = { 60, 120, CAN_TERMINATION_DISABLED };
+
+static int mcba_set_termination(struct net_device *dev, u16 term)
+{
+	printk("Termination %hu\n", term);
+
+	return 0;
+}
+
 static int mcba_usb_probe(struct usb_interface *intf,
 			  const struct usb_device_id *id)
 {
@@ -1089,6 +1098,9 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	priv->can.state = CAN_STATE_STOPPED;
 	priv->can.clock.freq = MCBA_CAN_CLOCK;
 	priv->can.bittiming_const = &mcba_bittiming_const;
+	priv->can.termination_const = mcba_termination;
+	*(unsigned int *)&priv->can.termination_const_cnt = ARRAY_SIZE(mcba_termination);
+	priv->can.do_set_termination = mcba_set_termination;
 
 	priv->can.do_set_mode = mcba_net_set_mode;
 	priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
