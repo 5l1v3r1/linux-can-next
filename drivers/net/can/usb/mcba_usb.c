@@ -94,6 +94,9 @@
 #define MCBA_CAN_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
 #define MCBA_CAN_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
 
+#define MCBA_CAN_STATE_WRN_TH 95
+#define MCBA_CAN_STATE_ERR_PSV_TH 127
+
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
 	u32 ndx;
@@ -775,6 +778,17 @@ static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 
 	priv->bec.txerr = msg->tx_err_cnt;
 	priv->bec.rxerr = msg->rx_err_cnt;
+
+	if (msg->tx_bus_off)
+		priv->can.state = CAN_STATE_BUS_OFF;
+
+	else if ((priv->bec.txerr > MCBA_CAN_STATE_ERR_PSV_TH) ||
+		(priv->bec.rxerr > MCBA_CAN_STATE_ERR_PSV_TH))
+		priv->can.state = CAN_STATE_ERROR_PASSIVE;
+
+	else if ((priv->bec.txerr > MCBA_CAN_STATE_WRN_TH) ||
+		(priv->bec.rxerr > MCBA_CAN_STATE_WRN_TH))
+		priv->can.state = CAN_STATE_ERROR_WARNING;
 }
 
 static void mcba_usb_process_rx(struct mcba_priv *priv,
@@ -932,8 +946,6 @@ static int mcba_usb_start(struct mcba_priv *priv)
 	if (i < MCBA_MAX_RX_URBS)
 		netdev_warn(netdev, "rx performance may be slow\n");
 
-	priv->can.state = CAN_STATE_ERROR_ACTIVE;
-
 	mcba_init_ctx(priv);
 	mcba_usb_xmit_read_fw_ver(priv, MCBA_VER_REQ_USB);
 	mcba_usb_xmit_read_fw_ver(priv, MCBA_VER_REQ_CAN);
@@ -944,6 +956,7 @@ static int mcba_usb_start(struct mcba_priv *priv)
 /* Open USB device */
 static int mcba_usb_open(struct net_device *netdev)
 {
+	struct mcba_priv *priv = netdev_priv(netdev);
 	int err;
 
 	/* common open */
@@ -951,7 +964,7 @@ static int mcba_usb_open(struct net_device *netdev)
 	if (err)
 		return err;
 
-	can_led_event(netdev, CAN_LED_EVENT_OPEN);
+	priv->can.state = CAN_STATE_ERROR_ACTIVE;
 
 	netif_start_queue(netdev);
 
@@ -977,8 +990,6 @@ static int mcba_usb_close(struct net_device *netdev)
 	mcba_urb_unlink(priv);
 
 	close_candev(netdev);
-
-	can_led_event(netdev, CAN_LED_EVENT_STOP);
 
 	return 0;
 }
