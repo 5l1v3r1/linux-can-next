@@ -97,6 +97,9 @@
 #define MCBA_CAN_STATE_WRN_TH 95
 #define MCBA_CAN_STATE_ERR_PSV_TH 127
 
+#define MCBA_TERMINATION_DISABLED CAN_TERMINATION_DISABLED
+#define MCBA_TERMINATION_ENABLED 120
+
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
 	u32 ndx;
@@ -115,7 +118,6 @@ struct mcba_priv {
 	struct usb_anchor tx_submitted;
 	struct usb_anchor rx_submitted;
 	struct can_berr_counter bec;
-	u8 termination_state;
 	bool usb_ka_first_pass;
 	bool can_ka_first_pass;
 };
@@ -446,6 +448,9 @@ static const struct usb_device_id mcba_usb_table[] = {
 
 MODULE_DEVICE_TABLE(usb, mcba_usb_table);
 
+static const u16 mcba_termination[] = { MCBA_TERMINATION_DISABLED, 
+					MCBA_TERMINATION_ENABLED };
+
 static inline void mcba_init_ctx(struct mcba_priv *priv)
 {
 	int i = 0;
@@ -762,7 +767,10 @@ static void mcba_usb_process_ka_usb(struct mcba_priv *priv,
 		priv->usb_ka_first_pass = false;
 	}
 
-	priv->termination_state = msg->termination_state;
+	if (msg->termination_state)
+		priv->can.termination = MCBA_TERMINATION_ENABLED;
+	else
+		priv->can.termination = MCBA_TERMINATION_DISABLED;
 }
 
 static void mcba_usb_process_ka_can(struct mcba_priv *priv,
@@ -1057,11 +1065,19 @@ static int mcba_net_set_bittiming(struct net_device *netdev)
 	return 0;
 }
 
-const u16 mcba_termination[] = { 60, 120, CAN_TERMINATION_DISABLED };
-
-static int mcba_set_termination(struct net_device *dev, u16 term)
+static int mcba_set_termination(struct net_device *netdev, u16 term)
 {
-	printk("Termination %hu\n", term);
+	struct mcba_priv *priv = netdev_priv(netdev);
+	struct mcba_usb_msg_terminaton usb_msg;
+
+	usb_msg.cmd_id = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
+
+	if (term == MCBA_TERMINATION_ENABLED)
+		usb_msg.termination = 1;
+	else
+		usb_msg.termination = 0;
+
+	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 
 	return 0;
 }
@@ -1099,7 +1115,7 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	priv->can.clock.freq = MCBA_CAN_CLOCK;
 	priv->can.bittiming_const = &mcba_bittiming_const;
 	priv->can.termination_const = mcba_termination;
-	*(unsigned int *)&priv->can.termination_const_cnt = ARRAY_SIZE(mcba_termination);
+	priv->can.termination_const_cnt = ARRAY_SIZE(mcba_termination);
 	priv->can.do_set_termination = mcba_set_termination;
 
 	priv->can.do_set_mode = mcba_net_set_mode;
