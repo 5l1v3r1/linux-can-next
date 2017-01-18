@@ -1091,7 +1091,18 @@ static int can_fill_info(struct sk_buff *skb, const struct net_device *dev)
 	      nla_put(skb, IFLA_CAN_TERMINATION_CONST,
 		      sizeof(*priv->termination_const) *
 			  priv->termination_const_cnt,
-		      priv->termination_const))))
+		      priv->termination_const))) ||
+
+	    (priv->bitrate_const &&
+	     nla_put(skb, IFLA_CAN_BITRATE_CONST,
+		     sizeof(*priv->bitrate_const) * priv->bitrate_const_cnt,
+		     priv->bitrate_const)) ||
+
+	    (priv->data_bitrate_const &&
+	     nla_put(skb, IFLA_CAN_DATA_BITRATE_CONST,
+		     sizeof(*priv->data_bitrate_const) *
+			 priv->data_bitrate_const_cnt,
+		     priv->data_bitrate_const)))
 
 		return -EMSGSIZE;
 
