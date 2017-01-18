@@ -958,32 +958,31 @@ static int can_changelink(struct net_device *dev,
 		}
 	}
 
+	if (data[IFLA_CAN_TERMINATION]) {
+		const u16 termval = nla_get_u16(data[IFLA_CAN_TERMINATION]);
+		const unsigned int num_term = priv->termination_const_cnt;
+		unsigned int i;
 
-if (data[IFLA_CAN_TERMINATION]) {
-const u16 termval = nla_get_u16(data[IFLA_CAN_TERMINATION]);
-const unsigned int num_term = priv->termination_const_cnt;
-unsigned int i;
+		if (!priv->do_set_termination)
+			return -EOPNOTSUPP;
 
- if (!priv->do_set_termination)
- return -EOPNOTSUPP;
+		/* check whether given value is supported by the interface */
+		for (i = 0; i < num_term; i++) {
+			if (termval == priv->termination_const[i])
+				break;
+		}
+		if (i >= num_term)
+			return -EINVAL;
 
- /* check whether given value is supported by the interface */
- for (i = 0; i < num_term; i++) {
-  if (termval == priv->termination_const[i])
-   break;
-  }
-if (i >= num_term)
- return -EINVAL;
+		/* Finally, set the termination value */
+		err = priv->do_set_termination(dev, termval);
+		if (err)
+			return err;
 
- /* Finally, set the termination value */
- err = priv->do_set_termination(dev, termval);
-if (err)
- return err;
+		priv->termination = termval;
+	}
 
- priv->termination = termval;
-}
-
-return 0;
+	return 0;
 }
 
 static size_t can_get_size(const struct net_device *dev)
@@ -1006,11 +1005,12 @@ static size_t can_get_size(const struct net_device *dev)
 	if (priv->data_bittiming_const)				/* IFLA_CAN_DATA_BITTIMING_CONST */
 		size += nla_total_size(sizeof(struct can_bittiming_const));
 
-       if (priv->termination_const) {
-               size += nla_total_size(sizeof(priv->termination));              /* IFLA_CAN_TERMINATION */
-               size += nla_total_size(sizeof(*priv->termination_const) *       /* IFLA_CAN_TERMINATION_CONST */
-                priv->termination_const_cnt);
-       }
+	if (priv->termination_const) {
+		size += nla_total_size(sizeof(priv->termination));              /* IFLA_CAN_TERMINATION */
+		size += nla_total_size(sizeof(*priv->termination_const) *       /* IFLA_CAN_TERMINATION_CONST */
+			priv->termination_const_cnt);
+	}
+
 	return size;
 }
 
@@ -1025,8 +1025,8 @@ static int can_fill_info(struct sk_buff *skb, const struct net_device *dev)
 		priv->do_get_state(dev, &state);
 
 	if ((priv->bittiming.bitrate &&
-	     nla_put(skb, IFLA_CAN_BITTIMING,
-		     sizeof(priv->bittiming), &priv->bittiming)) ||
+	     nla_put(skb, IFLA_CAN_BITTIMING, sizeof(priv->bittiming),
+		     &priv->bittiming)) ||
 
 	    (priv->bittiming_const &&
 	     nla_put(skb, IFLA_CAN_BITTIMING_CONST,
@@ -1042,23 +1042,23 @@ static int can_fill_info(struct sk_buff *skb, const struct net_device *dev)
 	     nla_put(skb, IFLA_CAN_BERR_COUNTER, sizeof(bec), &bec)) ||
 
 	    (priv->data_bittiming.bitrate &&
-	     nla_put(skb, IFLA_CAN_DATA_BITTIMING,
-		     sizeof(priv->data_bittiming), &priv->data_bittiming)) ||
+	     nla_put(skb, IFLA_CAN_DATA_BITTIMING, sizeof(priv->data_bittiming),
+		     &priv->data_bittiming)) ||
 
 	    (priv->data_bittiming_const &&
 	     nla_put(skb, IFLA_CAN_DATA_BITTIMING_CONST,
 		     sizeof(*priv->data_bittiming_const),
-		
-                    priv->data_bittiming_const)) ||
 
-           (priv->termination_const &&
-		            (nla_put_u16(skb, IFLA_CAN_TERMINATION, priv->termination) ||
-			             nla_put(skb, IFLA_CAN_TERMINATION_CONST,
-				                     sizeof(*priv->termination_const) *
-				                     priv->termination_const_cnt,
-				                     priv->termination_const))))
-			     
-			     return -EMSGSIZE;
+		     priv->data_bittiming_const)) ||
+
+	    (priv->termination_const &&
+	     (nla_put_u16(skb, IFLA_CAN_TERMINATION, priv->termination) ||
+	      nla_put(skb, IFLA_CAN_TERMINATION_CONST,
+		      sizeof(*priv->termination_const) *
+			  priv->termination_const_cnt,
+		      priv->termination_const))))
+
+		return -EMSGSIZE;
 
 	return 0;
 }
@@ -1114,16 +1114,16 @@ int register_candev(struct net_device *dev)
 {
        struct can_priv *priv = netdev_priv(dev);
 
-	       /* Ensure termination_const, termination_const_cnt and
-		           * do_set_termination consistency. All must be either set or
-		           * unset.
-		           */
-	       if ((!priv->termination_const != !priv->termination_const_cnt) ||
-			           (!priv->termination_const != !priv->do_set_termination))
-	               return -EINVAL;
+       /* Ensure termination_const, termination_const_cnt and
+	* do_set_termination consistency. All must be either set or
+	* unset.
+	*/
+       if ((!priv->termination_const != !priv->termination_const_cnt) ||
+	   (!priv->termination_const != !priv->do_set_termination))
+	       return -EINVAL;
 
-	dev->rtnl_link_ops = &can_link_ops;
-	return register_netdev(dev);
+       dev->rtnl_link_ops = &can_link_ops;
+       return register_netdev(dev);
 }
 EXPORT_SYMBOL_GPL(register_candev);
 
