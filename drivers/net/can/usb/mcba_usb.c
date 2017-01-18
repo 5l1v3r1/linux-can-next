@@ -522,6 +522,16 @@ static void mcba_usb_process_ka_usb(struct mcba_priv *priv,
 		priv->can.termination = MCBA_TERMINATION_DISABLED;
 }
 
+static u32 convert_can2host_bitrate(struct mcba_usb_msg_ka_can *msg)
+{
+	const u32 bitrate = get_unaligned_be16(&msg->can_bitrate);
+
+	if ((bitrate == 33) || (bitrate == 83))
+		return bitrate * 1000 + 333;
+	else
+		return bitrate * 1000;
+}
+
 static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 				    struct mcba_usb_msg_ka_can *msg)
 {
@@ -530,6 +540,15 @@ static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 			    msg->soft_ver_major, msg->soft_ver_minor);
 
 		priv->can_ka_first_pass = false;
+	}
+
+	if (priv->can.state != CAN_STATE_STOPPED) {
+		const u32 bitrate = convert_can2host_bitrate(msg);
+
+		if (unlikely(bitrate != priv->can.bittiming.bitrate))
+			netdev_err(priv->netdev,
+				"Wrong bitrate reported by the device (%u). Expected %u",
+				bitrate, priv->can.bittiming.bitrate);
 	}
 
 	priv->bec.txerr = msg->tx_err_cnt;
