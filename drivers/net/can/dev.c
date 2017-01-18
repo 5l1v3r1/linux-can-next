@@ -279,8 +279,30 @@ static int can_fixup_bittiming(struct net_device *dev, struct can_bittiming *bt,
 	return 0;
 }
 
+/* Checks the validity of predefined bitrate settings */
+static int can_validate_bitrate(struct net_device *dev,
+				struct can_bittiming *bt,
+				const u32 *bitrate_const,
+				const int bitrate_const_cnt)
+{
+	struct can_priv *priv = netdev_priv(dev);
+	int i;
+
+	for (i = 0; i < bitrate_const_cnt; i++) {
+		if (bt->bitrate == bitrate_const[i])
+			break;
+	}
+
+	if (i >= priv->bitrate_const_cnt)
+		return -EINVAL;
+
+	return 0;
+}
+
 static int can_get_bittiming(struct net_device *dev, struct can_bittiming *bt,
-			     const struct can_bittiming_const *btc)
+			     const struct can_bittiming_const *btc,
+			     const u32 *bitrate_const,
+			     const int bitrate_const_cnt)
 {
 	int err;
 
@@ -294,10 +316,13 @@ static int can_get_bittiming(struct net_device *dev, struct can_bittiming *bt,
 	 * alternatively the CAN timing parameters (tq, prop_seg, etc.) are
 	 * provided directly which are then checked and fixed up.
 	 */
-	if (!bt->tq && bt->bitrate)
+	if (!bt->tq && bt->bitrate && btc)
 		err = can_calc_bittiming(dev, bt, btc);
-	else if (bt->tq && !bt->bitrate)
+	else if (bt->tq && !bt->bitrate && btc)
 		err = can_fixup_bittiming(dev, bt, btc);
+	else if (!bt->tq && bt->bitrate && bitrate_const)
+		err = can_validate_bitrate(dev, bt, bitrate_const,
+					   bitrate_const_cnt);
 	else
 		err = -EINVAL;
 
@@ -873,7 +898,10 @@ static int can_changelink(struct net_device *dev,
 		if (dev->flags & IFF_UP)
 			return -EBUSY;
 		memcpy(&bt, nla_data(data[IFLA_CAN_BITTIMING]), sizeof(bt));
-		err = can_get_bittiming(dev, &bt, priv->bittiming_const);
+		err = can_get_bittiming(dev, &bt, 
+					priv->bittiming_const,
+					priv->bitrate_const,
+					priv->bitrate_const_cnt);
 		if (err)
 			return err;
 		memcpy(&priv->bittiming, &bt, sizeof(bt));
@@ -945,7 +973,10 @@ static int can_changelink(struct net_device *dev,
 			return -EBUSY;
 		memcpy(&dbt, nla_data(data[IFLA_CAN_DATA_BITTIMING]),
 		       sizeof(dbt));
-		err = can_get_bittiming(dev, &dbt, priv->data_bittiming_const);
+		err = can_get_bittiming(dev, &dbt, 
+					priv->data_bittiming_const,
+					priv->data_bitrate_const,
+					priv->data_bitrate_const_cnt);
 		if (err)
 			return err;
 		memcpy(&priv->data_bittiming, &dbt, sizeof(dbt));
@@ -1010,6 +1041,14 @@ static size_t can_get_size(const struct net_device *dev)
 		size += nla_total_size(sizeof(*priv->termination_const) *       /* IFLA_CAN_TERMINATION_CONST */
 			priv->termination_const_cnt);
 	}
+
+	if (priv->bitrate_const) /* IFLA_CAN_BITRATE_CONST */
+		size += nla_total_size(sizeof(*priv->bitrate_const) *
+				       priv->bitrate_const_cnt);
+
+	if (priv->data_bitrate_const) /* IFLA_CAN_DATA_BITRATE_CONST */
+		size += nla_total_size(sizeof(*priv->data_bitrate_const) *
+				       priv->data_bitrate_const_cnt);
 
 	return size;
 }
@@ -1120,6 +1159,12 @@ int register_candev(struct net_device *dev)
 	 */
 	if ((!priv->termination_const != !priv->termination_const_cnt) ||
 	    (!priv->termination_const != !priv->do_set_termination))
+		return -EINVAL;
+
+	if (!priv->bitrate_const != !priv->bitrate_const_cnt)
+		return -EINVAL;
+
+	if (!priv->data_bitrate_const != !priv->data_bitrate_const_cnt)
 		return -EINVAL;
 
 	dev->rtnl_link_ops = &can_link_ops;
