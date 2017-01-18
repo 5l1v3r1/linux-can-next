@@ -38,9 +38,9 @@ struct can_priv {
 	struct can_bittiming bittiming, data_bittiming;
 	const struct can_bittiming_const *bittiming_const,
 		*data_bittiming_const;
-       const u16 *termination_const;
-       unsigned int termination_const_cnt;
-       u16 termination;
+	const u16 *termination_const;
+	unsigned int termination_const_cnt;
+	u16 termination;
 	struct can_clock clock;
 
 	enum can_state state;

@@ -1112,18 +1112,18 @@ static struct rtnl_link_ops can_link_ops __read_mostly = {
  */
 int register_candev(struct net_device *dev)
 {
-       struct can_priv *priv = netdev_priv(dev);
+	struct can_priv *priv = netdev_priv(dev);
 
-       /* Ensure termination_const, termination_const_cnt and
-	* do_set_termination consistency. All must be either set or
-	* unset.
-	*/
-       if ((!priv->termination_const != !priv->termination_const_cnt) ||
-	   (!priv->termination_const != !priv->do_set_termination))
-	       return -EINVAL;
+	/* Ensure termination_const, termination_const_cnt and
+	 * do_set_termination consistency. All must be either set or
+	 * unset.
+	 */
+	if ((!priv->termination_const != !priv->termination_const_cnt) ||
+	    (!priv->termination_const != !priv->do_set_termination))
+		return -EINVAL;
 
-       dev->rtnl_link_ops = &can_link_ops;
-       return register_netdev(dev);
+	dev->rtnl_link_ops = &can_link_ops;
+	return register_netdev(dev);
 }
 EXPORT_SYMBOL_GPL(register_candev);
 
