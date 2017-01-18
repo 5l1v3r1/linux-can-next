@@ -188,239 +188,6 @@ struct bitrate_settings {
 	u16 kbps;
 };
 
-/* Required by can-dev but not for the sake of driver as CANBUS is USB based */
-static const struct can_bittiming_const mcba_bittiming_const = {
-    .name = "mcba_usb",
-    .tseg1_min = 1,
-    .tseg1_max = 8,
-    .tseg2_min = 1,
-    .tseg2_max = 8,
-    .sjw_max = 4,
-    .brp_min = 2,
-    .brp_max = 128,
-    .brp_inc = 2,
-};
-
-/* predefined values hardcoded in device's firmware */
-static const struct bitrate_settings
-    br_settings[] = {{.bt =
-			  {
-			      .bitrate = 19940,
-			      .sample_point = 700,
-			      .tq = 2500,
-			      .prop_seg = 5,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 6,
-			      .sjw = 1,
-			      .brp = 100,
-			  },
-		      .kbps = 20},
-		     {.bt =
-			  {
-			      .bitrate = 33333,
-			      .sample_point = 680,
-			      .tq = 1200,
-			      .prop_seg = 8,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 8,
-			      .sjw = 1,
-			      .brp = 48,
-			  },
-		      .kbps = 33},
-		     {.bt =
-			  {
-			      .bitrate = 50000,
-			      .sample_point = 800,
-			      .tq = 1000,
-			      .prop_seg = 8,
-			      .phase_seg1 = 7,
-			      .phase_seg2 = 4,
-			      .sjw = 1,
-			      .brp = 40,
-			  },
-		      .kbps = 50},
-		     {.bt =
-			  {
-			      .bitrate = 80000,
-			      .sample_point = 680,
-			      .tq = 500,
-			      .prop_seg = 8,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 8,
-			      .sjw = 1,
-			      .brp = 20,
-			  },
-		      .kbps = 80},
-		     {.bt =
-			  {
-			      .bitrate = 83333,
-			      .sample_point = 708,
-			      .tq = 500,
-			      .prop_seg = 8,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 7,
-			      .sjw = 1,
-			      .brp = 20,
-			  },
-		      .kbps = 83},
-		     {.bt =
-			  {
-			      .bitrate = 100000,
-			      .sample_point = 700,
-			      .tq = 1000,
-			      .prop_seg = 1,
-			      .phase_seg1 = 5,
-			      .phase_seg2 = 3,
-			      .sjw = 1,
-			      .brp = 40,
-			  },
-		      .kbps = 100},
-		     {.bt =
-			  {
-			      .bitrate = 125000,
-			      .sample_point = 600,
-			      .tq = 400,
-			      .prop_seg = 3,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 8,
-			      .sjw = 1,
-			      .brp = 16,
-			  },
-		      .kbps = 125},
-		     {.bt =
-			  {
-			      .bitrate = 150375,
-			      .sample_point = 789,
-			      .tq = 350,
-			      .prop_seg = 8,
-			      .phase_seg1 = 6,
-			      .phase_seg2 = 4,
-			      .sjw = 1,
-			      .brp = 14,
-			  },
-		      .kbps = 150},
-
-		     {.bt =
-			  {
-			      .bitrate = 175438,
-			      .sample_point = 789,
-			      .tq = 300,
-			      .prop_seg = 8,
-			      .phase_seg1 = 6,
-			      .phase_seg2 = 4,
-			      .sjw = 1,
-			      .brp = 12,
-			  },
-		      .kbps = 175},
-		     {.bt =
-			  {
-			      .bitrate = 200000,
-			      .sample_point = 680,
-			      .tq = 200,
-			      .prop_seg = 8,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 8,
-			      .sjw = 1,
-			      .brp = 8,
-			  },
-		      .kbps = 200},
-		     {.bt =
-			  {
-			      .bitrate = 227272,
-			      .sample_point = 772,
-			      .tq = 200,
-			      .prop_seg = 8,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 5,
-			      .sjw = 1,
-			      .brp = 8,
-			  },
-		      .kbps = 225},
-		     {.bt =
-			  {
-			      .bitrate = 250000,
-			      .sample_point = 600,
-			      .tq = 200,
-			      .prop_seg = 3,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 8,
-			      .sjw = 1,
-			      .brp = 8,
-			  },
-		      .kbps = 250},
-		     {.bt =
-			  {
-			      .bitrate = 277777,
-			      .sample_point = 708,
-			      .tq = 150,
-			      .prop_seg = 8,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 7,
-			      .sjw = 1,
-			      .brp = 6,
-			  },
-		      .kbps = 275},
-		     {.bt =
-			  {
-			      .bitrate = 303030,
-			      .sample_point = 772,
-			      .tq = 150,
-			      .prop_seg = 8,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 5,
-			      .sjw = 1,
-			      .brp = 6,
-			  },
-		      .kbps = 300},
-		     {.bt =
-			  {
-			      .bitrate = 500000,
-			      .sample_point = 600,
-			      .tq = 100,
-			      .prop_seg = 3,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 8,
-			      .sjw = 1,
-			      .brp = 4,
-			  },
-		      .kbps = 500},
-		     {.bt =
-			  {
-			      .bitrate = 625000,
-			      .sample_point = 750,
-			      .tq = 200,
-			      .prop_seg = 1,
-			      .phase_seg1 = 4,
-			      .phase_seg2 = 2,
-			      .sjw = 1,
-			      .brp = 8,
-			  },
-		      .kbps = 625},
-		     {.bt =
-			  {
-			      .bitrate = 800000,
-			      .sample_point = 680,
-			      .tq = 50,
-			      .prop_seg = 8,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 8,
-			      .sjw = 1,
-			      .brp = 2,
-			  },
-		      .kbps = 800},
-		     {.bt =
-			  {
-			      .bitrate = 1000000,
-			      .sample_point = 600,
-			      .tq = 50,
-			      .prop_seg = 3,
-			      .phase_seg1 = 8,
-			      .phase_seg2 = 8,
-			      .sjw = 1,
-			      .brp = 2,
-			  },
-		      .kbps = 1000}};
-
 static const struct usb_device_id mcba_usb_table[] = {
     {USB_DEVICE(MCBA_VENDOR_ID, MCBA_PRODUCT_ID)}, {} /* Terminating entry */
 };
@@ -429,6 +196,10 @@ MODULE_DEVICE_TABLE(usb, mcba_usb_table);
 
 static const u16 mcba_termination[] = {MCBA_TERMINATION_DISABLED,
 				       MCBA_TERMINATION_ENABLED};
+
+static const u32 mcba_bitrate[] = {
+    20000,  33333,  50000,  80000,  83333,  100000, 125000, 150000, 175000,
+    200000, 225000, 250000, 275000, 300000, 500000, 625000, 800000, 1000000};
 
 static inline void mcba_init_ctx(struct mcba_priv *priv)
 {
@@ -1008,36 +779,10 @@ static const struct net_device_ops mcba_netdev_ops = {
  */
 static int mcba_net_set_bittiming(struct net_device *netdev)
 {
-	u8 i;
 	struct mcba_priv *priv = netdev_priv(netdev);
-	struct can_bittiming *bt = &priv->can.bittiming;
-	const struct bitrate_settings *settings = NULL;
-	const u8 setting_cnt =
-	    sizeof(br_settings) / sizeof(struct bitrate_settings);
-
-	for (i = 0; i < setting_cnt; ++i)
-		if (br_settings[i].bt.bitrate == bt->bitrate)
-			settings = &br_settings[i];
-
-	if (settings) {
-		memcpy(bt, &settings->bt, sizeof(struct can_bittiming));
-
-		/* recalculate bitrate as it may be different than default */
-		bt->bitrate = 1000000000 / ((bt->sjw + bt->prop_seg +
-					     bt->phase_seg1 + bt->phase_seg2) *
-					    bt->tq);
-
-		mcba_usb_xmit_change_bitrate(priv, settings->kbps);
-	} else {
-		netdev_err(netdev, "Unsupported bittrate (%u). Use one of: "
-				   "20000, 33333, 50000, 80000, 83333, 100000, "
-				   "125000, 150000, 175000, 200000, 225000, "
-				   "250000, 275000, 300000, 500000, 625000, "
-				   "800000, 1000000\n",
-			   bt->bitrate);
-
-		return -EINVAL;
-	}
+	const u16 bitrate_kbps = (u16)priv->can.bittiming.bitrate / 1000;
+		
+	mcba_usb_xmit_change_bitrate(priv, bitrate_kbps);
 
 	return 0;
 }
@@ -1090,11 +835,12 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	/* Init CAN device */
 	priv->can.state = CAN_STATE_STOPPED;
 	priv->can.clock.freq = MCBA_CAN_CLOCK;
-	priv->can.bittiming_const = &mcba_bittiming_const;
 	priv->can.termination_const = mcba_termination;
 	priv->can.termination_const_cnt = ARRAY_SIZE(mcba_termination);
+	priv->can.bitrate_const = mcba_bitrate;
+	priv->can.bitrate_const_cnt = ARRAY_SIZE(mcba_bitrate);
+	
 	priv->can.do_set_termination = mcba_set_termination;
-
 	priv->can.do_set_mode = mcba_net_set_mode;
 	priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
 	priv->can.do_set_bittiming = mcba_net_set_bittiming;
