@@ -119,6 +119,7 @@ struct mcba_priv {
 	struct can_berr_counter bec;
 	bool usb_ka_first_pass;
 	bool can_ka_first_pass;
+	bool can_speed_check;
 };
 
 /* command frame */
@@ -542,13 +543,13 @@ static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 		priv->can_ka_first_pass = false;
 	}
 
-	if (priv->can.state != CAN_STATE_STOPPED) {
+	if (unlikely(priv->can_speed_check)) {
 		const u32 bitrate = convert_can2host_bitrate(msg);
+		priv->can_speed_check = false;
 
-		if (unlikely(bitrate != priv->can.bittiming.bitrate))
-			netdev_err(priv->netdev,
-				"Wrong bitrate reported by the device (%u). Expected %u",
-				bitrate, priv->can.bittiming.bitrate);
+		if (bitrate != priv->can.bittiming.bitrate)
+			netdev_err(priv->netdev, "Wrong bitrate reported by the device (%u). Expected %u",
+				   bitrate, priv->can.bittiming.bitrate);
 	}
 
 	priv->bec.txerr = msg->tx_err_cnt;
@@ -736,6 +737,7 @@ static int mcba_usb_open(struct net_device *netdev)
 	if (err)
 		return err;
 
+	priv->can_speed_check = true;
 	priv->can.state = CAN_STATE_ERROR_ACTIVE;
 
 	netif_start_queue(netdev);
@@ -799,7 +801,7 @@ static const struct net_device_ops mcba_netdev_ops = {
 static int mcba_net_set_bittiming(struct net_device *netdev)
 {
 	struct mcba_priv *priv = netdev_priv(netdev);
-	const u16 bitrate_kbps = (u16)priv->can.bittiming.bitrate / 1000;
+	const u16 bitrate_kbps = (u16)(priv->can.bittiming.bitrate / 1000);
 		
 	mcba_usb_xmit_change_bitrate(priv, bitrate_kbps);
 
@@ -845,6 +847,7 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	priv->netdev = netdev;
 	priv->usb_ka_first_pass = true;
 	priv->can_ka_first_pass = true;
+	priv->can_speed_check = false;
 
 	init_usb_anchor(&priv->rx_submitted);
 	init_usb_anchor(&priv->tx_submitted);
