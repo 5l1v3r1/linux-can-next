@@ -17,15 +17,15 @@
  * This driver is inspired by the 4.6.2 version of net/can/usb/usb_8dev.c
  */
 
+#include <linux/can.h>
+#include <linux/can/dev.h>
+#include <linux/can/error.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/signal.h>
 #include <linux/slab.h>
-#include <linux/usb.h>
-#include <linux/can.h>
-#include <linux/can/dev.h>
-#include <linux/can/error.h>
 #include <linux/unaligned/be_byteshift.h>
+#include <linux/usb.h>
 
 /* vendor and product id */
 #define MCBA_MODULE_NAME "mcba_usb"
@@ -111,7 +111,6 @@ struct mcba_priv {
 	struct can_priv can; /* must be the first member */
 	struct sk_buff *echo_skb[MCBA_MAX_TX_URBS];
 	struct mcba_usb_ctx tx_context[MCBA_MAX_TX_URBS];
-
 	struct usb_device *udev;
 	struct net_device *netdev;
 	struct usb_anchor tx_submitted;
@@ -122,7 +121,7 @@ struct mcba_priv {
 	bool can_speed_check;
 };
 
-/* command frame */
+/* CAN frame */
 struct __packed mcba_usb_msg_can {
 	u8 cmd_id;
 	u8 eidh;
@@ -184,23 +183,20 @@ struct __packed mcba_usb_msg_fw_ver {
 	u8 unused[17];
 };
 
-struct bitrate_settings {
-	struct can_bittiming bt;
-	u16 kbps;
-};
-
 static const struct usb_device_id mcba_usb_table[] = {
-    {USB_DEVICE(MCBA_VENDOR_ID, MCBA_PRODUCT_ID)}, {} /* Terminating entry */
+	{ USB_DEVICE(MCBA_VENDOR_ID, MCBA_PRODUCT_ID) },
+	{} /* Terminating entry */
 };
 
 MODULE_DEVICE_TABLE(usb, mcba_usb_table);
 
-static const u16 mcba_termination[] = {MCBA_TERMINATION_DISABLED,
-				       MCBA_TERMINATION_ENABLED};
+static const u16 mcba_termination[] = { MCBA_TERMINATION_DISABLED,
+					MCBA_TERMINATION_ENABLED };
 
-static const u32 mcba_bitrate[] = {
-    20000,  33333,  50000,  80000,  83333,  100000, 125000, 150000, 175000,
-    200000, 225000, 250000, 275000, 300000, 500000, 625000, 800000, 1000000};
+static const u32 mcba_bitrate[] = { 20000,  33333,  50000,  80000,  83333,
+				    100000, 125000, 150000, 175000, 200000,
+				    225000, 250000, 275000, 300000, 500000,
+				    625000, 800000, 1000000 };
 
 static inline void mcba_init_ctx(struct mcba_priv *priv)
 {
@@ -230,7 +226,7 @@ static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv)
 static inline void mcba_usb_free_ctx(struct mcba_usb_ctx *ctx)
 {
 	ctx->ndx = MCBA_CTX_FREE;
-	ctx->priv = 0;
+	ctx->priv = NULL;
 	ctx->dlc = 0;
 	ctx->can = false;
 }
@@ -434,18 +430,6 @@ static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic)
 	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 }
 
-/* To be used once termination API will be ready
-static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination)
-{
-	struct mcba_usb_msg_terminaton usb_msg;
-
-	usb_msg.cmd_id = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
-	usb_msg.termination = termination;
-
-	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
-}
-*/
-
 static inline void convert_usb2can_msg(const struct mcba_usb_msg_can *in,
 				       struct can_frame *out)
 {
@@ -545,11 +529,14 @@ static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 
 	if (unlikely(priv->can_speed_check)) {
 		const u32 bitrate = convert_can2host_bitrate(msg);
+
 		priv->can_speed_check = false;
 
 		if (bitrate != priv->can.bittiming.bitrate)
-			netdev_err(priv->netdev, "Wrong bitrate reported by the device (%u). Expected %u",
-				   bitrate, priv->can.bittiming.bitrate);
+			netdev_err(
+			    priv->netdev,
+			    "Wrong bitrate reported by the device (%u). Expected %u",
+			    bitrate, priv->can.bittiming.bitrate);
 	}
 
 	priv->bec.txerr = msg->tx_err_cnt;
@@ -675,7 +662,6 @@ static int mcba_usb_start(struct mcba_priv *priv)
 		/* create a URB, and a buffer for it */
 		urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!urb) {
-			netdev_err(netdev, "No memory left for URBs\n");
 			err = -ENOMEM;
 			break;
 		}
@@ -790,9 +776,10 @@ static int mcba_net_get_berr_counter(const struct net_device *netdev,
 }
 
 static const struct net_device_ops mcba_netdev_ops = {
-    .ndo_open = mcba_usb_open,
-    .ndo_stop = mcba_usb_close,
-    .ndo_start_xmit = mcba_usb_start_xmit};
+	.ndo_open = mcba_usb_open,
+	.ndo_stop = mcba_usb_close,
+	.ndo_start_xmit = mcba_usb_start_xmit,
+};
 
 /* Microchip CANBUS has hardcoded bittiming values by default.
  * This function sends request via USB to change the speed and align bittiming
@@ -802,7 +789,7 @@ static int mcba_net_set_bittiming(struct net_device *netdev)
 {
 	struct mcba_priv *priv = netdev_priv(netdev);
 	const u16 bitrate_kbps = (u16)(priv->can.bittiming.bitrate / 1000);
-		
+
 	mcba_usb_xmit_change_bitrate(priv, bitrate_kbps);
 
 	return 0;
@@ -861,7 +848,7 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	priv->can.termination_const_cnt = ARRAY_SIZE(mcba_termination);
 	priv->can.bitrate_const = mcba_bitrate;
 	priv->can.bitrate_const_cnt = ARRAY_SIZE(mcba_bitrate);
-	
+
 	priv->can.do_set_termination = mcba_set_termination;
 	priv->can.do_set_mode = mcba_net_set_mode;
 	priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
@@ -917,10 +904,10 @@ static void mcba_usb_disconnect(struct usb_interface *intf)
 }
 
 static struct usb_driver mcba_usb_driver = {
-    .name = MCBA_MODULE_NAME,
-    .probe = mcba_usb_probe,
-    .disconnect = mcba_usb_disconnect,
-    .id_table = mcba_usb_table,
+	.name = MCBA_MODULE_NAME,
+	.probe = mcba_usb_probe,
+	.disconnect = mcba_usb_disconnect,
+	.id_table = mcba_usb_table,
 };
 
 module_usb_driver(mcba_usb_driver);
