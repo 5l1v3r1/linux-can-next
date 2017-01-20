@@ -47,11 +47,6 @@
 #define MCBA_USB_EP_IN 1
 #define MCBA_USB_EP_OUT 1
 
-/* Not required by driver itself as CANBUS is USB based
- * Used internally by candev for bitrate calculation
- */
-#define MCBA_CAN_CLOCK 40000000
-
 /* Microchip command id */
 #define MBCA_CMD_RECEIVE_MESSAGE 0xE3
 #define MBCA_CMD_I_AM_ALIVE_FROM_CAN 0xF5
@@ -843,7 +838,6 @@ static int mcba_usb_probe(struct usb_interface *intf,
 
 	/* Init CAN device */
 	priv->can.state = CAN_STATE_STOPPED;
-	priv->can.clock.freq = MCBA_CAN_CLOCK;
 	priv->can.termination_const = mcba_termination;
 	priv->can.termination_const_cnt = ARRAY_SIZE(mcba_termination);
 	priv->can.bitrate_const = mcba_bitrate;
