@@ -24,7 +24,7 @@
 #include <linux/netdevice.h>
 #include <linux/signal.h>
 #include <linux/slab.h>
-#include <linux/unaligned/be_byteshift.h>
+#include <asm/unaligned.h>
 #include <linux/usb.h>
 
 /* vendor and product id */
@@ -83,11 +83,6 @@
 #define MCBA_DLC_MASK 0xf
 #define MCBA_DLC_RTR_MASK 0x40
 
-#define MCBA_USB_IS_EXID(usb_msg) ((usb_msg)->sidl & MCBA_SIDL_EXID_MASK)
-#define MCBA_USB_IS_RTR(usb_msg) ((usb_msg)->dlc & MCBA_DLC_RTR_MASK)
-#define MCBA_CAN_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
-#define MCBA_CAN_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
-
 #define MCBA_CAN_STATE_WRN_TH 95
 #define MCBA_CAN_STATE_ERR_PSV_TH 127
 
@@ -119,10 +114,8 @@ struct mcba_priv {
 /* CAN frame */
 struct __packed mcba_usb_msg_can {
 	u8 cmd_id;
-	u8 eidh;
-	u8 eidl;
-	u8 sidh;
-	u8 sidl;
+	__be16 eid;
+	__be16 sid;
 	u8 dlc;
 	u8 data[8];
 	u8 timestamp[4];
@@ -149,8 +142,8 @@ struct __packed mcba_usb_msg_ka_can {
 	u8 rx_err_cnt;
 	u8 rx_buff_ovfl;
 	u8 tx_bus_off;
-	u16 can_bitrate; /* BE */
-	u16 rx_lost;     /* LE */
+	__be16 can_bitrate;
+	__le16 rx_lost;
 	u8 can_stat;
 	u8 soft_ver_major;
 	u8 soft_ver_minor;
@@ -162,7 +155,7 @@ struct __packed mcba_usb_msg_ka_can {
 
 struct __packed mcba_usb_msg_change_bitrate {
 	u8 cmd_id;
-	u16 bitrate; /* BE */
+	__be16 bitrate;
 	u8 unused[16];
 };
 
@@ -337,52 +330,6 @@ nomem:
 	return NETDEV_TX_OK;
 }
 
-static inline void convert_can2usb_msg(const struct can_frame *in,
-				       struct mcba_usb_msg_can *out)
-{
-	u32 tmp;
-
-	if (MCBA_CAN_IS_EXID(in)) {
-		out->sidl = MCBA_SIDL_EXID_MASK;
-
-		tmp = in->can_id & MCBA_CAN_E_SID0_SID2_MASK;
-		tmp >>= MCBA_CAN_E_SID0_SID2_SHIFT - MCBA_SIDL_SID0_SID2_SHIFT;
-		out->sidl |= tmp;
-
-		tmp = in->can_id & MCBA_CAN_EID16_EID17_MASK;
-		tmp >>= MCBA_CAN_EID16_EID17_SHIFT;
-		out->sidl |= tmp;
-
-		tmp = in->can_id & MCBA_CAN_E_SID3_SID10_MASK;
-		tmp >>= MCBA_CAN_E_SID3_SID10_SHIFT;
-		out->sidh = tmp;
-
-		out->eidl = in->can_id & MCBA_CAN_EID0_EID7_MASK;
-
-		tmp = in->can_id & MCBA_CAN_EID8_EID15_MASK;
-		tmp >>= MCBA_CAN_EID8_EID15_SHIFT;
-		out->eidh = tmp;
-	} else {
-		tmp = in->can_id & MCBA_CAN_S_SID0_SID2_MASK;
-		tmp <<= MCBA_SIDL_SID0_SID2_SHIFT;
-		out->sidl = tmp;
-
-		tmp = in->can_id & MCBA_CAN_S_SID3_SID10_MASK;
-		tmp >>= MCBA_CAN_S_SID3_SID10_SHIFT;
-		out->sidh = tmp;
-
-		out->eidl = 0;
-		out->eidh = 0;
-	}
-
-	out->dlc = get_can_dlc(in->can_dlc);
-
-	memcpy(out->data, in->data, out->dlc);
-
-	if (MCBA_CAN_IS_RTR(in))
-		out->dlc |= MCBA_DLC_RTR_MASK;
-}
-
 /* Send data to device */
 static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
 				       struct net_device *netdev)
@@ -390,10 +337,39 @@ static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
 	struct mcba_priv *priv = netdev_priv(netdev);
 	struct can_frame *cf = (struct can_frame *)skb->data;
 	struct mcba_usb_msg_can usb_msg;
+	u16 sid;
 
 	usb_msg.cmd_id = MBCA_CMD_TRANSMIT_MESSAGE_EV;
+	if (cf->can_id & CAN_EFF_FLAG) {
+		/* We need to store ID in the order expected by MCBA:
+		 * SIDH    | SIDL                 | EIDH   | EIDL 
+		 * 28 - 21 | 20 19 18 x x x 17 16 | 15 - 8 | 7 - 0
+		 */
+		sid = MCBA_SIDL_EXID_MASK;
+		/* store 28-18 bits */
+		sid |= (cf->can_id & 0x1ffc0000) >> 13;
+		/* store 17-16 bits */
+		sid |= (cf->can_id & 0x30000) >> 16;
+		put_unaligned_be16(sid,	&usb_msg.sid);
+		
+		/* store 15-0 bits */
+		put_unaligned_be16(cf->can_id & 0xffff, &usb_msg.eid);
+	} else {
+		/* We need to store ID in the order expected by MCBA:
+		 * SIDH   | SIDL
+		 * 10 - 3 | 2 1 0 x x x x x
+		 */
+		put_unaligned_be16((cf->can_id & CAN_SFF_MASK) << 5, 
+				&usb_msg.sid);
+		usb_msg.eid = 0;
+	}
 
-	convert_can2usb_msg(cf, &usb_msg);
+	usb_msg.dlc = cf->can_dlc;
+
+	memcpy(usb_msg.data, cf->data, usb_msg.dlc);
+
+	if (cf->can_id & CAN_RTR_FLAG)
+		usb_msg.dlc |= MCBA_DLC_RTR_MASK;
 
 	return mcba_usb_xmit(priv, (struct mcba_usb_msg *)&usb_msg, skb);
 }
@@ -425,60 +401,45 @@ static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic)
 	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 }
 
-static inline void convert_usb2can_msg(const struct mcba_usb_msg_can *in,
-				       struct can_frame *out)
-{
-	u32 tmp;
-
-	if (MCBA_USB_IS_EXID(in)) {
-		out->can_id = in->eidl;
-
-		tmp = in->eidh;
-		tmp <<= MCBA_CAN_EID8_EID15_SHIFT;
-		out->can_id |= tmp;
-
-		tmp = in->sidl & MCBA_SIDL_EID16_EID17_MASK;
-		tmp <<= MCBA_CAN_EID16_EID17_SHIFT;
-		out->can_id |= tmp;
-
-		tmp = in->sidl & MCBA_SIDL_SID0_SID2_MASK;
-		tmp <<= MCBA_CAN_E_SID0_SID2_SHIFT - MCBA_SIDL_SID0_SID2_SHIFT;
-		out->can_id |= tmp;
-
-		tmp = in->sidh;
-		tmp <<= MCBA_CAN_E_SID3_SID10_SHIFT;
-		out->can_id |= tmp;
-
-		out->can_id |= CAN_EFF_FLAG;
-	} else {
-		out->can_id = in->sidl & MCBA_SIDL_SID0_SID2_MASK;
-		out->can_id >>= MCBA_SIDL_SID0_SID2_SHIFT;
-
-		tmp = in->sidh;
-		tmp <<= MCBA_CAN_S_SID3_SID10_SHIFT;
-		out->can_id |= tmp;
-	}
-
-	if (MCBA_USB_IS_RTR(in))
-		out->can_id |= CAN_RTR_FLAG;
-
-	out->can_dlc = get_can_dlc(in->dlc & MCBA_DLC_MASK);
-
-	memcpy(out->data, in->data, out->can_dlc);
-}
-
 static void mcba_usb_process_can(struct mcba_priv *priv,
 				 struct mcba_usb_msg_can *msg)
 {
 	struct can_frame *cf;
 	struct sk_buff *skb;
 	struct net_device_stats *stats = &priv->netdev->stats;
+	u16 sid;
 
 	skb = alloc_can_skb(priv->netdev, &cf);
 	if (!skb)
 		return;
+		
+	sid = get_unaligned_be16(&msg->sid);
 
-	convert_usb2can_msg(msg, cf);
+	if (sid & MCBA_SIDL_EXID_MASK) {
+		/* SIDH    | SIDL                 | EIDH   | EIDL 
+		 * 28 - 21 | 20 19 18 x x x 17 16 | 15 - 8 | 7 - 0
+		 */
+		cf->can_id = CAN_EFF_FLAG;
+
+		/* store 28-18 bits */
+		cf->can_id |= (sid & 0xffe0) << 13;
+		/* store 17-16 bits */
+		cf->can_id |= (sid & 3) << 16;
+		/* store 15-0 bits */
+		cf->can_id |= get_unaligned_be16(&msg->eid);
+	} else {
+		/* SIDH   | SIDL
+		 * 10 - 3 | 2 1 0 x x x x x
+		 */
+		cf->can_id = (sid & 0xffe0) >> 5;
+	}
+
+	if (msg->dlc & MCBA_DLC_RTR_MASK)
+		cf->can_id |= CAN_RTR_FLAG;
+
+	cf->can_dlc = get_can_dlc(msg->dlc & MCBA_DLC_MASK);
+
+	memcpy(cf->data, msg->data, cf->can_dlc);
 
 	stats->rx_packets++;
 	stats->rx_bytes += cf->can_dlc;
