@@ -1,6 +1,6 @@
 /* SocketCAN driver for Microchip CAN BUS Analyzer Tool
  *
- * Copyright (C) 2016 Mobica Limited
+ * Copyright (C) 2017 Mobica Limited
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published
@@ -17,6 +17,7 @@
  * This driver is inspired by the 4.6.2 version of net/can/usb/usb_8dev.c
  */
 
+#include <asm/unaligned.h>
 #include <linux/can.h>
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
@@ -24,7 +25,6 @@
 #include <linux/netdevice.h>
 #include <linux/signal.h>
 #include <linux/slab.h>
-#include <asm/unaligned.h>
 #include <linux/usb.h>
 
 /* vendor and product id */
@@ -61,25 +61,7 @@
 #define MCBA_VER_REQ_USB 1
 #define MCBA_VER_REQ_CAN 2
 
-#define MCBA_CAN_S_SID0_SID2_MASK 0x7
-#define MCBA_CAN_S_SID3_SID10_MASK 0x7F8
-#define MCBA_CAN_S_SID3_SID10_SHIFT 3
-
-#define MCBA_CAN_EID0_EID7_MASK 0xff
-#define MCBA_CAN_EID8_EID15_MASK 0xff00
-#define MCBA_CAN_EID16_EID17_MASK 0x30000
-#define MCBA_CAN_E_SID0_SID2_MASK 0x1c0000
-#define MCBA_CAN_E_SID3_SID10_MASK 0x1fe00000
-#define MCBA_CAN_EID8_EID15_SHIFT 8
-#define MCBA_CAN_EID16_EID17_SHIFT 16
-#define MCBA_CAN_E_SID0_SID2_SHIFT 18
-#define MCBA_CAN_E_SID3_SID10_SHIFT 21
-
-#define MCBA_SIDL_SID0_SID2_MASK 0xe0
 #define MCBA_SIDL_EXID_MASK 0x8
-#define MCBA_SIDL_EID16_EID17_MASK 0x3
-#define MCBA_SIDL_SID0_SID2_SHIFT 5
-
 #define MCBA_DLC_MASK 0xf
 #define MCBA_DLC_RTR_MASK 0x40
 
@@ -109,6 +91,7 @@ struct mcba_priv {
 	bool usb_ka_first_pass;
 	bool can_ka_first_pass;
 	bool can_speed_check;
+	atomic_t free_ctx_cnt;
 };
 
 /* CAN frame */
@@ -159,7 +142,7 @@ struct __packed mcba_usb_msg_change_bitrate {
 	u8 unused[16];
 };
 
-struct __packed mcba_usb_msg_terminaton {
+struct __packed mcba_usb_msg_termination {
 	u8 cmd_id;
 	u8 termination;
 	u8 unused[17];
@@ -190,11 +173,16 @@ static inline void mcba_init_ctx(struct mcba_priv *priv)
 {
 	int i = 0;
 
-	for (i = 0; i < MCBA_MAX_TX_URBS; i++)
+	for (i = 0; i < MCBA_MAX_TX_URBS; i++) {
 		priv->tx_context[i].ndx = MCBA_CTX_FREE;
+		priv->tx_context[i].priv = priv;
+	}
+
+	atomic_set(&priv->free_ctx_cnt, ARRAY_SIZE(priv->tx_context));
 }
 
-static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv)
+static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv,
+							 struct can_frame *cf)
 {
 	int i = 0;
 	struct mcba_usb_ctx *ctx = NULL;
@@ -203,20 +191,39 @@ static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv)
 		if (priv->tx_context[i].ndx == MCBA_CTX_FREE) {
 			ctx = &priv->tx_context[i];
 			ctx->ndx = i;
-			ctx->priv = priv;
+
+			if (cf) {
+				ctx->can = true;
+				ctx->dlc = cf->can_dlc;
+			} else {
+				ctx->can = false;
+				ctx->dlc = 0;
+			}
+
+			atomic_dec(&priv->free_ctx_cnt);
 			break;
 		}
 	}
 
+	if (!atomic_read(&priv->free_ctx_cnt))
+		/* That was the last free ctx. Slow down tx path */
+		netif_stop_queue(priv->netdev);
+
 	return ctx;
 }
 
+/* mcba_usb_free_ctx and mcba_usb_get_free_ctx are executed by different
+ * threads. The order of execution in below function is important.
+ */
 static inline void mcba_usb_free_ctx(struct mcba_usb_ctx *ctx)
 {
+	/* Increase number of free ctxs before freeing ctx */
+	atomic_inc(&ctx->priv->free_ctx_cnt);
+
 	ctx->ndx = MCBA_CTX_FREE;
-	ctx->priv = NULL;
-	ctx->dlc = 0;
-	ctx->can = false;
+
+	/* Wake up the queue once ctx is marked free */
+	netif_wake_queue(ctx->priv->netdev);
 }
 
 static void mcba_usb_write_bulk_callback(struct urb *urb)
@@ -236,8 +243,6 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
 		netdev->stats.tx_bytes += ctx->dlc;
 
 		can_get_echo_skb(netdev, ctx->ndx);
-
-		netif_wake_queue(netdev);
 	}
 
 	/* free up our allocated buffer */
@@ -247,53 +252,37 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
 	if (urb->status)
 		netdev_info(netdev, "Tx URB aborted (%d)\n", urb->status);
 
-	/* Release context */
+	/* Release the context */
 	mcba_usb_free_ctx(ctx);
 }
 
 /* Send data to device */
 static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv,
 				 struct mcba_usb_msg *usb_msg,
-				 struct sk_buff *skb)
+				 struct mcba_usb_ctx *ctx)
 {
-	struct net_device_stats *stats = &priv->netdev->stats;
-	struct mcba_usb_ctx *ctx = NULL;
 	struct urb *urb;
 	u8 *buf;
 	int err;
 
-	ctx = mcba_usb_get_free_ctx(priv);
-	if (!ctx) {
-		/* Slow down tx path */
-		netif_stop_queue(priv->netdev);
-
-		return NETDEV_TX_BUSY;
-	}
-
-	if (skb) {
-		ctx->dlc =
-		    ((struct mcba_usb_msg_can *)usb_msg)->dlc & MCBA_DLC_MASK;
-		can_put_echo_skb(skb, priv->netdev, ctx->ndx);
-		ctx->can = true;
-	} else {
-		ctx->can = false;
-	}
-
 	/* create a URB, and a buffer for it, and copy the data to the URB */
 	urb = usb_alloc_urb(0, GFP_ATOMIC);
 	if (!urb)
-		goto nomem;
+		return -ENOMEM;
 
 	buf = usb_alloc_coherent(priv->udev, MCBA_USB_TX_BUFF_SIZE, GFP_ATOMIC,
 				 &urb->transfer_dma);
-	if (!buf)
+	if (!buf) {
+		err = -ENOMEM;
 		goto nomembuf;
+	}
 
 	memcpy(buf, usb_msg, MCBA_USB_TX_BUFF_SIZE);
 
-	usb_fill_bulk_urb(
-	    urb, priv->udev, usb_sndbulkpipe(priv->udev, MCBA_USB_EP_OUT), buf,
-	    MCBA_USB_TX_BUFF_SIZE, mcba_usb_write_bulk_callback, ctx);
+	usb_fill_bulk_urb(urb, priv->udev,
+			  usb_sndbulkpipe(priv->udev, MCBA_USB_EP_OUT), buf,
+			  MCBA_USB_TX_BUFF_SIZE, mcba_usb_write_bulk_callback,
+			  ctx);
 
 	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 	usb_anchor_urb(urb, &priv->tx_submitted);
@@ -307,7 +296,7 @@ static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv,
 	 */
 	usb_free_urb(urb);
 
-	return NETDEV_TX_OK;
+	return 0;
 
 failed:
 	usb_unanchor_urb(urb);
@@ -322,12 +311,7 @@ failed:
 nomembuf:
 	usb_free_urb(urb);
 
-nomem:
-	can_free_echo_skb(priv->netdev, ctx->ndx);
-	dev_kfree_skb(skb);
-	stats->tx_dropped++;
-
-	return NETDEV_TX_OK;
+	return err;
 }
 
 /* Send data to device */
@@ -337,12 +321,23 @@ static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
 	struct mcba_priv *priv = netdev_priv(netdev);
 	struct can_frame *cf = (struct can_frame *)skb->data;
 	struct mcba_usb_msg_can usb_msg;
+	struct mcba_usb_ctx *ctx = NULL;
+	struct net_device_stats *stats = &priv->netdev->stats;
 	u16 sid;
+	int err;
+
+	if (can_dropped_invalid_skb(netdev, skb))
+		return NETDEV_TX_OK;
+
+	ctx = mcba_usb_get_free_ctx(priv, cf);
+	if (!ctx)
+		return NETDEV_TX_BUSY;
+
+	can_put_echo_skb(skb, priv->netdev, ctx->ndx);
 
 	usb_msg.cmd_id = MBCA_CMD_TRANSMIT_MESSAGE_EV;
 	if (cf->can_id & CAN_EFF_FLAG) {
-		/* We need to store ID in the order expected by MCBA:
-		 * SIDH    | SIDL                 | EIDH   | EIDL 
+		/* SIDH    | SIDL                 | EIDH   | EIDL
 		 * 28 - 21 | 20 19 18 x x x 17 16 | 15 - 8 | 7 - 0
 		 */
 		sid = MCBA_SIDL_EXID_MASK;
@@ -350,17 +345,16 @@ static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
 		sid |= (cf->can_id & 0x1ffc0000) >> 13;
 		/* store 17-16 bits */
 		sid |= (cf->can_id & 0x30000) >> 16;
-		put_unaligned_be16(sid,	&usb_msg.sid);
-		
+		put_unaligned_be16(sid, &usb_msg.sid);
+
 		/* store 15-0 bits */
 		put_unaligned_be16(cf->can_id & 0xffff, &usb_msg.eid);
 	} else {
-		/* We need to store ID in the order expected by MCBA:
-		 * SIDH   | SIDL
+		/* SIDH   | SIDL
 		 * 10 - 3 | 2 1 0 x x x x x
 		 */
-		put_unaligned_be16((cf->can_id & CAN_SFF_MASK) << 5, 
-				&usb_msg.sid);
+		put_unaligned_be16((cf->can_id & CAN_SFF_MASK) << 5,
+				   &usb_msg.sid);
 		usb_msg.eid = 0;
 	}
 
@@ -371,14 +365,41 @@ static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
 	if (cf->can_id & CAN_RTR_FLAG)
 		usb_msg.dlc |= MCBA_DLC_RTR_MASK;
 
-	return mcba_usb_xmit(priv, (struct mcba_usb_msg *)&usb_msg, skb);
+	err = mcba_usb_xmit(priv, (struct mcba_usb_msg *)&usb_msg, ctx);
+	if (err)
+		goto xmit_failed;
+
+	return NETDEV_TX_OK;
+
+xmit_failed:
+	can_free_echo_skb(priv->netdev, ctx->ndx);
+	mcba_usb_free_ctx(ctx);
+	dev_kfree_skb(skb);
+	stats->tx_dropped++;
+
+	return NETDEV_TX_OK;
 }
 
-/* Send data to device */
+/* Send cmd to device */
 static void mcba_usb_xmit_cmd(struct mcba_priv *priv,
 			      struct mcba_usb_msg *usb_msg)
 {
-	mcba_usb_xmit(priv, usb_msg, 0);
+	struct mcba_usb_ctx *ctx = NULL;
+	int err;
+
+	ctx = mcba_usb_get_free_ctx(priv, NULL);
+	if (!ctx) {
+		netdev_err(priv->netdev,
+			   "Lack of free ctx. Sending (%d) cmd aborted",
+			   usb_msg->cmd_id);
+
+		return;
+	}
+
+	err = mcba_usb_xmit(priv, usb_msg, ctx);
+	if (err)
+		netdev_err(priv->netdev, "Failed to send cmd (%d)",
+			   usb_msg->cmd_id);
 }
 
 static void mcba_usb_xmit_change_bitrate(struct mcba_priv *priv, u16 bitrate)
@@ -412,11 +433,11 @@ static void mcba_usb_process_can(struct mcba_priv *priv,
 	skb = alloc_can_skb(priv->netdev, &cf);
 	if (!skb)
 		return;
-		
+
 	sid = get_unaligned_be16(&msg->sid);
 
 	if (sid & MCBA_SIDL_EXID_MASK) {
-		/* SIDH    | SIDL                 | EIDH   | EIDL 
+		/* SIDH    | SIDL                 | EIDH   | EIDL
 		 * 28 - 21 | 20 19 18 x x x 17 16 | 15 - 8 | 7 - 0
 		 */
 		cf->can_id = CAN_EFF_FLAG;
@@ -611,6 +632,8 @@ static int mcba_usb_start(struct mcba_priv *priv)
 	struct net_device *netdev = priv->netdev;
 	int err, i;
 
+	mcba_init_ctx(priv);
+
 	for (i = 0; i < MCBA_MAX_RX_URBS; i++) {
 		struct urb *urb = NULL;
 		u8 *buf;
@@ -661,7 +684,6 @@ static int mcba_usb_start(struct mcba_priv *priv)
 	if (i < MCBA_MAX_RX_URBS)
 		netdev_warn(netdev, "rx performance may be slow\n");
 
-	mcba_init_ctx(priv);
 	mcba_usb_xmit_read_fw_ver(priv, MCBA_VER_REQ_USB);
 	mcba_usb_xmit_read_fw_ver(priv, MCBA_VER_REQ_CAN);
 
@@ -744,7 +766,7 @@ static const struct net_device_ops mcba_netdev_ops = {
 static int mcba_net_set_bittiming(struct net_device *netdev)
 {
 	struct mcba_priv *priv = netdev_priv(netdev);
-	const u16 bitrate_kbps = (u16)(priv->can.bittiming.bitrate / 1000);
+	const u16 bitrate_kbps = priv->can.bittiming.bitrate / 1000;
 
 	mcba_usb_xmit_change_bitrate(priv, bitrate_kbps);
 
@@ -754,7 +776,7 @@ static int mcba_net_set_bittiming(struct net_device *netdev)
 static int mcba_set_termination(struct net_device *netdev, u16 term)
 {
 	struct mcba_priv *priv = netdev_priv(netdev);
-	struct mcba_usb_msg_terminaton usb_msg;
+	struct mcba_usb_msg_termination usb_msg;
 
 	usb_msg.cmd_id = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
 
@@ -775,8 +797,6 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	struct mcba_priv *priv;
 	int err = -ENOMEM;
 	struct usb_device *usbdev = interface_to_usbdev(intf);
-
-	dev_info(&intf->dev, "Microchip CAN BUS analizer connected\n");
 
 	netdev = alloc_candev(sizeof(struct mcba_priv), MCBA_MAX_TX_URBS);
 	if (!netdev) {
@@ -834,6 +854,8 @@ static int mcba_usb_probe(struct usb_interface *intf,
 
 		goto cleanup_candev;
 	}
+
+	dev_info(&intf->dev, "Microchip CAN BUS analizer connected\n");
 
 	return err;
 
